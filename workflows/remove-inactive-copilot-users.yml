@@ -21,7 +21,7 @@ permissions:
 
 # Environment variables
 env:
-  ORG_NAME: 'Gogolook-Inc'
+  ORG_NAME: 'GitHub Org Name'
   THRESHOLD_DAYS: 60  # Number of days of inactivity before removing Copilot access
 
 # Job definitions
