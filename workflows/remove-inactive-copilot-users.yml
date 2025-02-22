@@ -1,0 +1,117 @@
+# Workflow name: This workflow removes GitHub Copilot seats from users who haven't used it for 60 days
+name: Remove Copilot seats that haven't been used for 60 days
+
+# Trigger conditions
+on:
+  schedule:
+    # Runs at 00:00 UTC on the 28th of every month
+    - cron: '0 0 28 * *'
+  # Manual trigger with workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry Run? (true/false)'
+        required: true
+        default: 'true'
+
+# Required permissions for the workflow
+permissions:
+  contents: write  # For reading/writing repository contents
+  issues: write    # For creating notification issues
+
+# Environment variables
+env:
+  ORG_NAME: 'Gogolook-Inc'
+  THRESHOLD_DAYS: 60  # Number of days of inactivity before removing Copilot access
+
+# Job definitions
+jobs:
+  remove-inactive-users:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Step 1: Check out the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Node.js environment
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Step 3: Create package.json with required dependencies
+      - name: Create package.json
+        run: |
+          echo '{
+            "name": "unused-copilot-seats-cleaner",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "axios": "^1.6.2"
+            }
+          }' > package.json
+
+      # Step 4: Install project dependencies
+      - name: Install dependencies
+        run: npm install
+
+      # Step 5: Set current date and user information
+      - name: Set current date and user
+        id: set-current-info
+        run: |
+          # Set current UTC time
+          CURRENT_DATE=$(date -u +"%Y-%m-%d %H:%M:%S")
+          echo "CURRENT_DATE=${CURRENT_DATE}" >> $GITHUB_ENV
+          echo "Current Date and Time (UTC): ${CURRENT_DATE}"
+          # Set current user
+          echo "CURRENT_USER=${GITHUB_ACTOR}" >> $GITHUB_ENV
+          echo "Current User: ${GITHUB_ACTOR}"
+
+      # Step 6: Check Copilot usage for all users
+      - name: Check Copilot Usage
+        id: check-usage
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_UNUSED_COPILOT_SEATS_CLEANER }}
+          CURRENT_DATE: ${{ env.CURRENT_DATE }}
+          CURRENT_USER: ${{ env.CURRENT_USER }}
+          THRESHOLD_DAYS: ${{ env.THRESHOLD_DAYS }}
+        run: node .github/scripts/check-copilot-usage.js
+
+      # Step 7: Remove inactive users and send notifications
+      - name: Remove Inactive Users and Notify
+        if: steps.check-usage.outputs.inactive_users != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_UNUSED_COPILOT_SEATS_CLEANER }}
+          CURRENT_DATE: ${{ env.CURRENT_DATE }}
+          CURRENT_USER: ${{ env.CURRENT_USER }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+        run: node .github/scripts/remove-inactive-users.js
+
+      # Step 8: Upload results as artifacts for record keeping
+      - name: Upload results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copilot-removal-reports
+          path: clean-logs/*.md
+          retention-days: 90
+
+      # Step 9: Commit and push report
+      - name: Commit and push report
+        if: always()
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add clean-logs/*.md
+          git commit -m "docs: Add Copilot removal report [skip ci]" || echo "No changes to commit"
+          git push
+
+      # Step 10: Clean up temporary files
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Cleaning up temporary files..."
+          rm -f .github/scripts/inactive_users.txt || true
+          rm -f .github/scripts/removal_simulation_results.csv || true
+          rm -f .github/scripts/removal_simulation_results.json || true
